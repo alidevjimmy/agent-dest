@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	moveMsg = "worker %d x: %d, y: %d\n"
+	moveMsg = "worker %d x: %d, y: %d; dst x: %d, y: %d\n"
 )
 
 type Location = struct {
@@ -48,32 +48,33 @@ func (a *Agent) Start() {
 	go func() {
 		for dest := range a.dest {
 			moveCount := math.Min(math.Abs(float64(dest.X-a.location.X)), math.Abs(float64(dest.Y-a.location.Y)))
-			fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y)
+			fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
 			for i := 0; i < int(moveCount); i++ {
 				a.location.X += 1
 				a.location.Y += 1
-				fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y)
+				fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
 				time.Sleep(1 * time.Second)
 			}
-			if m := a.location.X - dest.X; m != 0 {
-				for i := 0; i < m; i++ {
+			m1 := dest.X - a.location.X
+			m2 := dest.Y - a.location.Y
+			if m1 != 0 {
+				for i := 0; i < m1; i++ {
 					a.location.X += 1
-					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y)
+					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
 					time.Sleep(1 * time.Second)
 
 				}
-			} else if m := a.location.Y - dest.Y; m != 0 {
-				for i := 0; i < m; i++ {
+			} else if m2 != 0 {
+				for i := 0; i < m2; i++ {
 					a.location.Y += 1
-					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y)
+					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
 					time.Sleep(1 * time.Second)
 
 				}
-			} else {
-				fmt.Printf("worker %d reached the destination x:%d, y:%d\n", a.id, a.location.X, a.location.Y)
-				time.Sleep(1 * time.Second)
-
 			}
+
+			fmt.Printf("worker %d reached the destination x:%d, y:%d\n", a.id, a.location.X, a.location.Y)
+			time.Sleep(1 * time.Second)
 
 			a.wg.Done()
 			a.mu.Unlock()
@@ -175,9 +176,9 @@ func (a AgentPool) Stop() {
 }
 
 func main() {
-	numAgents := 2
+	numAgents := 3
 	dests := []Location{
-		{6, 8},
+		{2, 3},
 		{2, 2},
 		{3, 7},
 		{7, 4},
