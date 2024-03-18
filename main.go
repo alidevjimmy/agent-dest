@@ -17,20 +17,21 @@ type Location = struct {
 }
 
 type Worker interface {
-	Start()
-	Assign(Location)
+	Start(delay time.Duration)
+	Assign(dst Location)
 	CanAssign() bool
 	GetPriority() int
 	GetLocation() Location
+	Moves(dst Location) int
 }
 
 type Agent struct {
 	id       int
 	priority int
-	mu       sync.Mutex
 	location Location
-	dest     chan Location
+	mu       sync.Mutex
 	wg       *sync.WaitGroup
+	dest     chan Location
 }
 
 func NewAgent(id int, priority int, wg *sync.WaitGroup) Worker {
@@ -44,37 +45,54 @@ func NewAgent(id int, priority int, wg *sync.WaitGroup) Worker {
 	}
 }
 
-func (a *Agent) Start() {
+func (a *Agent) Start(delay time.Duration) {
 	go func() {
 		for dest := range a.dest {
 			moveCount := math.Min(math.Abs(float64(dest.X-a.location.X)), math.Abs(float64(dest.Y-a.location.Y)))
 			fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
-			for i := 0; i < int(moveCount); i++ {
-				a.location.X += 1
-				a.location.Y += 1
-				fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
-				time.Sleep(1 * time.Second)
+			nx := 1
+			ny := 1
+			switch {
+			case (dest.X-a.location.X < 0) && (dest.Y-a.location.Y < 0):
+				nx = -1
+				ny = -1
+			case dest.X-a.location.X < 0:
+				nx = -1
+			case dest.Y-a.location.Y < 0:
+				ny = -1
 			}
-			m1 := dest.X - a.location.X
-			m2 := dest.Y - a.location.Y
-			if m1 != 0 {
-				for i := 0; i < m1; i++ {
-					a.location.X += 1
+			for i := 0; i < int(moveCount); i++ {
+				a.location.X += nx
+				a.location.Y += ny
+				fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
+				time.Sleep(delay)
+			}
+			if m := dest.X - a.location.X; m != 0 {
+				xm := 1
+				if m < 0 {
+					xm = -1
+				}
+				for i := 0; i < int(math.Abs(float64(m))); i++ {
+					a.location.X += xm
 					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
-					time.Sleep(1 * time.Second)
+					time.Sleep(delay)
 
 				}
-			} else if m2 != 0 {
-				for i := 0; i < m2; i++ {
-					a.location.Y += 1
+			} else if m = dest.Y - a.location.Y; m != 0 {
+				ym := 1
+				if m < 0 {
+					ym = -1
+				}
+				for i := 0; i < int(math.Abs(float64(m))); i++ {
+					a.location.Y += ym
 					fmt.Printf(moveMsg, a.id, a.location.X, a.location.Y, dest.X, dest.Y)
-					time.Sleep(1 * time.Second)
+					time.Sleep(delay)
 
 				}
 			}
 
 			fmt.Printf("worker %d reached the destination x:%d, y:%d\n", a.id, a.location.X, a.location.Y)
-			time.Sleep(1 * time.Second)
+			time.Sleep(delay)
 
 			a.wg.Done()
 			a.mu.Unlock()
@@ -98,40 +116,63 @@ func (a *Agent) Assign(t Location) {
 func (a *Agent) GetPriority() int {
 	return a.priority
 }
+
 func (a *Agent) GetLocation() Location {
 	return a.location
 }
 
+func (a *Agent) Moves(dst Location) int {
+	moveCount := math.Min(math.Abs(float64(dst.X-a.location.X)), math.Abs(float64(dst.Y-a.location.Y)))
+	tx := moveCount
+	ty := moveCount
+	if m := math.Abs(tx - float64(dst.X)); m != 0 {
+		moveCount += m
+	} else if m = math.Abs(ty - float64(dst.Y)); m != 0 {
+		moveCount += m
+	}
+	return int(moveCount)
+}
+
 type WorkerPool interface {
-	Run()
+	Run(delay time.Duration)
+	Wait()
 	AddTask(Location)
 	Stop()
 }
 
 type AgentPool struct {
 	Agents []Worker
+	wg     *sync.WaitGroup
 	stop   chan struct{}
 }
 
-func NewAgentPool(numAgents int, wg *sync.WaitGroup) WorkerPool {
+func NewAgentPool(numAgents int) WorkerPool {
+	var wg sync.WaitGroup
 	var agents []Worker
 
 	for i := 0; i < numAgents; i++ {
-		agents = append(agents, NewAgent(i+1, i, wg))
+		agents = append(agents, NewAgent(i+1, i, &wg))
 	}
 
 	return &AgentPool{
 		Agents: agents,
+		wg:     &wg,
+		stop:   make(chan struct{}),
 	}
 }
 
-func (a AgentPool) Run() {
+func (a AgentPool) Run(delay time.Duration) {
 	for _, agent := range a.Agents {
-		agent.Start()
+		agent.Start(delay)
 	}
+}
+
+func (a AgentPool) Wait() {
+	a.wg.Wait()
 }
 
 func (a AgentPool) AddTask(t Location) {
+	a.wg.Add(1)
 	for {
 		var nominated Worker
 		var ready []Worker
@@ -142,12 +183,10 @@ func (a AgentPool) AddTask(t Location) {
 			}
 		}
 		if len(ready) > 0 {
-			loc := ready[0].GetLocation()
-			minPath := moves(loc, t)
+			minPath := ready[0].Moves(t)
 
 			for _, r := range ready {
-				loc := r.GetLocation()
-				mc := moves(loc, t)
+				mc := r.Moves(t)
 				if mc < minPath {
 					minPath = mc
 				}
@@ -155,7 +194,7 @@ func (a AgentPool) AddTask(t Location) {
 
 			nominated = ready[0]
 			for _, ca := range canAssign {
-				if moves(ca.GetLocation(), t) == minPath {
+				if ca.Moves(t) == minPath {
 					nominated = ca
 
 				}
@@ -177,32 +216,21 @@ func (a AgentPool) Stop() {
 
 func main() {
 	numAgents := 3
-	dests := []Location{
-		{2, 3},
-		{2, 2},
-		{3, 7},
+	dsts := []Location{
+		{-2, -3},
+		{-2, 2},
+		{3, -7},
 		{7, 4},
+		{5, -1},
+		{-3, -6},
 	}
-	var wg sync.WaitGroup
-	pool := NewAgentPool(numAgents, &wg)
-	pool.Run()
 
-	for _, dest := range dests {
-		wg.Add(1)
+	pool := NewAgentPool(numAgents)
+	pool.Run(1 * time.Second)
+
+	for _, dest := range dsts {
 		pool.AddTask(dest)
 	}
 
-	wg.Wait()
-}
-
-func moves(src Location, dst Location) int {
-	moveCount := math.Min(math.Abs(float64(dst.X-src.X)), math.Abs(float64(dst.Y-src.Y)))
-	src.X += int(moveCount)
-	src.Y += int(moveCount)
-	if m := src.X - dst.X; m != 0 {
-		moveCount += float64(m)
-	} else if m := src.Y - dst.Y; m != 0 {
-		moveCount += float64(m)
-	}
-	return int(moveCount)
+	pool.Wait()
 }
