@@ -41,14 +41,21 @@ func TestWorkersDestinations(t *testing.T) {
 		{
 			name:       "3 workers 6 dsts with 1 sec delay",
 			numWorkers: 3,
-			delay:      0,
+			delay:      1,
 			dsts:       locs,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			pool := NewAgentPool(tc.numWorkers)
+			pool.Run(tc.delay)
 
+			for _, dst := range tc.dsts {
+				pool.AddTask(dst)
+			}
+
+			pool.Wait()
 		})
 	}
 }
